@@ -4,25 +4,35 @@ from datetime import datetime
 
 # === CONFIGURATION SECTION ===
 CONFIG = {
-    "main_file": "main.xlsx",  # Original data file
-    "output_file": "updated_main.xlsx",  # Final output file
-    "new_columns": ["Scan Date", "Reviewer", "Remarks"],  # Columns to add at the beginning
-    "column_static_values": {  # Static values for new columns
+    # Main file containing original data
+    "main_file": "main.xlsx",
+
+    # Output file for final results
+    "output_file": "updated_main.xlsx",
+
+    # New columns to add at the beginning
+    "new_columns": ["Scan Date", "Reviewer", "Remarks"],
+
+    # Optional static values for new columns
+    "column_static_values": {
         "Scan Date": "2025-05-24",
         "Reviewer": "Security Team"
     },
 
-    # Lookup configuration
+    # Lookup matching configuration
     "main_column_to_match": "App ID",              # Column in main file to match
-    "main_column_to_fill": "Owner",                # Column in main file to fill
-    "lookup_file": "reference.xlsx",               # File to lookup from
-    "lookup_sheet_name": "Sheet1",                 # Sheet name in the lookup file
-    "lookup_key_column": "Application ID",         # Column in lookup file to match
-    "lookup_value_column": "App Owner",            # Value to fill from lookup
-    "unmatched_output_file": "unmatched_rows.xlsx" # Output file for unmatched rows
+    "main_column_to_fill": "Owner",                # Column in main file to fill with matched values
+
+    "lookup_file": "reference.xlsx",               # Reference file
+    "lookup_sheet_name": "Sheet1",                 # Sheet inside reference file
+    "lookup_key_column": "Application ID",         # Column to match against in lookup
+    "lookup_value_column": "App Owner",            # Column to fetch value from in lookup
+
+    "unmatched_output_file": "unmatched_rows.xlsx",  # File to write unmatched rows
+    "unmatched_placeholder": "ID not found"        # Value to fill for unmatched rows
 }
 
-# Function to nicely format execution time
+# Helper to nicely format duration
 def format_duration(duration):
     seconds = duration.total_seconds()
     if seconds < 60:
@@ -35,85 +45,85 @@ def format_duration(duration):
         seconds = int(seconds % 60)
         return f"{hours} hours {minutes} minutes {seconds} seconds"
 
-# === MAIN FUNCTION START ===
 def main():
     start_time = datetime.now()
     print("\n🚀 Starting Excel processing...")
 
-    # 1. Check both required files exist
+    # Step 1: Check that both required files exist
     for file in [CONFIG["main_file"], CONFIG["lookup_file"]]:
         if not os.path.exists(file):
             print(f"❌ File not found: {file}")
             return
     print("✅ All required files found.")
 
-    # 2. Load main Excel file
+    # Step 2: Load the main Excel file
     print(f"📖 Reading main file: {CONFIG['main_file']}")
     df_main = pd.read_excel(CONFIG["main_file"], engine="openpyxl")
 
-    # 3. Add new columns with static values (or leave blank)
+    # Step 3: Add new columns with static values (if configured)
     print(f"➕ Adding new columns at the beginning: {CONFIG['new_columns']}")
     df_new = pd.DataFrame()
-
     for col in CONFIG["new_columns"]:
         if col in CONFIG["column_static_values"]:
             val = CONFIG["column_static_values"][col]
             df_new[col] = [val] * len(df_main)
-            print(f"🧷 Column '{col}' set to static value: {val}")
+            print(f"🧷 Column '{col}' filled with static value: '{val}'")
         else:
             df_new[col] = [""] * len(df_main)
-            print(f"⬜ Column '{col}' left blank.")
+            print(f"⬜ Column '{col}' left blank")
 
-    # Merge new columns with original data
+    # Concatenate new columns to the front of the main data
     df_main = pd.concat([df_new, df_main], axis=1)
 
-    # 4. Add the target column to fill (if not already present)
+    # Step 4: Ensure the target column to fill exists
     if CONFIG["main_column_to_fill"] not in df_main.columns:
-        print(f"🆕 Creating column: {CONFIG['main_column_to_fill']}")
+        print(f"🆕 Column '{CONFIG['main_column_to_fill']}' not found. Creating it.")
         df_main[CONFIG["main_column_to_fill"]] = ""
 
-    # 5. Load lookup Excel (specific sheet)
+    # Step 5: Load the lookup file from specified sheet
     print(f"📖 Reading lookup file: {CONFIG['lookup_file']} (Sheet: {CONFIG['lookup_sheet_name']})")
     df_lookup = pd.read_excel(CONFIG["lookup_file"], sheet_name=CONFIG["lookup_sheet_name"], engine="openpyxl")
 
-    # 6. Create a lookup dictionary
-    print("🔧 Creating lookup mapping...")
+    # Step 6: Create a lookup dictionary for fast matching
+    print("🔧 Creating lookup dictionary...")
     lookup_dict = pd.Series(
         df_lookup[CONFIG["lookup_value_column"]].values,
         index=df_lookup[CONFIG["lookup_key_column"]]
     ).to_dict()
 
-    # 7. Fill values into main column using the lookup
-    print(f"🧩 Matching '{CONFIG['main_column_to_match']}' and filling '{CONFIG['main_column_to_fill']}'")
+    # Step 7: Fill values using the lookup dictionary
+    print(f"🧩 Matching '{CONFIG['main_column_to_match']}' and filling '{CONFIG['main_column_to_fill']}'...")
     unmatched_rows = []
     matched_rows = 0
 
-    for idx, val in df_main[CONFIG["main_column_to_match"]].items():
-        if val in lookup_dict:
-            df_main.at[idx, CONFIG["main_column_to_fill"]] = lookup_dict[val]
+    for idx, value in df_main[CONFIG["main_column_to_match"]].items():
+        if value in lookup_dict:
+            df_main.at[idx, CONFIG["main_column_to_fill"]] = lookup_dict[value]
             matched_rows += 1
         else:
+            df_main.at[idx, CONFIG["main_column_to_fill"]] = CONFIG["unmatched_placeholder"]
             unmatched_rows.append(idx)
 
-    print(f"✅ Filled {matched_rows} rows from reference data.")
+    print(f"✅ Filled {matched_rows} rows from lookup.")
+    print(f"⚠️ {len(unmatched_rows)} unmatched rows set to '{CONFIG['unmatched_placeholder']}'")
 
-    # 8. Save unmatched rows to a separate file
+    # Step 8: Save unmatched rows to a separate Excel file
     if unmatched_rows:
         df_unmatched = df_main.loc[unmatched_rows]
         df_unmatched.to_excel(CONFIG["unmatched_output_file"], index=False)
-        print(f"⚠️ Unmatched rows saved to: {CONFIG['unmatched_output_file']} ({len(unmatched_rows)} rows)")
+        print(f"📝 Unmatched rows written to: {CONFIG['unmatched_output_file']}")
     else:
         print("✅ All rows matched. No unmatched rows found.")
 
-    # 9. Save the final updated file
+    # Step 9: Save the updated main file
     df_main.to_excel(CONFIG["output_file"], index=False)
-    print(f"💾 Final output written to: {CONFIG['output_file']}")
+    print(f"💾 Final output saved to: {CONFIG['output_file']}")
 
-    # 10. Print execution time
+    # Step 10: Print execution time
     duration = datetime.now() - start_time
     print(f"🕒 Execution time: {format_duration(duration)}")
     print("🎉 Script completed successfully!\n")
 
-# Entry point
+# Run the main function
 if __name__ == "__main__":
     main()
