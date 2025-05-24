@@ -1,7 +1,11 @@
 import pandas as pd
 import os
+import warnings
 from datetime import datetime
 from openpyxl import load_workbook
+
+# ✅ Suppress annoying openpyxl warning for data validation
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 # === CONFIGURATION ===
 CONFIG = {
@@ -17,7 +21,7 @@ CONFIG = {
         "Reviewer": "Security Team"
     },
 
-    # 🔁 List of all lookup mappings
+    # You can add any number of lookup mappings here
     "lookups": [
         {
             "target_column": "Owner",
@@ -62,7 +66,7 @@ CONFIG = {
     ]
 }
 
-# 🕒 Format elapsed time nicely
+# ✅ Timer formatter
 def format_duration(duration):
     seconds = duration.total_seconds()
     if seconds < 60:
@@ -79,13 +83,13 @@ def main():
     start_time = datetime.now()
     print("\n🚀 Starting Excel enhancement script...\n")
 
-    # Step 1: Read the main Excel file
+    # 1️⃣ Load main Excel file
     if not os.path.exists(CONFIG["main_file"]):
         print(f"❌ Main file not found: {CONFIG['main_file']}")
         return
     df_main = pd.read_excel(CONFIG["main_file"], engine="openpyxl")
 
-    # Step 2: Add static columns at the beginning
+    # 2️⃣ Add static columns at the beginning
     df_static = pd.DataFrame()
     print("➕ Adding static columns at beginning:")
     for col in CONFIG["new_columns"]:
@@ -94,25 +98,25 @@ def main():
         print(f"  - {col}: '{val}'")
     df_main = pd.concat([df_static, df_main], axis=1)
 
+    # Prepare tracking
     all_unmatched_indices = set()
-    summary_data = []  # to hold matched/unmatched info for summary tab
+    summary_data = []
 
-    # Step 3: Process each lookup entry
+    # 3️⃣ Loop through each lookup definition
     for lookup in CONFIG["lookups"]:
-        print(f"\n🔍 Processing lookup for: {lookup['target_column']}")
+        print(f"\n🔍 Processing lookup for column: {lookup['target_column']}")
 
-        # Ensure target column exists
+        # Create target column if not already in main
         if lookup["target_column"] not in df_main.columns:
             df_main[lookup["target_column"]] = ""
 
-        # Load lookup Excel
+        # Load lookup Excel file
         if not os.path.exists(lookup["lookup_file"]):
             print(f"❌ Lookup file not found: {lookup['lookup_file']}")
             continue
-
         df_lookup = pd.read_excel(lookup["lookup_file"], sheet_name=lookup["sheet_name"], engine="openpyxl")
 
-        # Build lookup dictionary
+        # Create dictionary for fast lookup
         lookup_dict = pd.Series(
             df_lookup[lookup["lookup_value_column"]].values,
             index=df_lookup[lookup["lookup_key_column"]]
@@ -120,7 +124,7 @@ def main():
 
         matched, unmatched = 0, 0
 
-        # Fill values in main file
+        # Fill values into the main DataFrame
         for idx, value in df_main[lookup["match_column"]].items():
             if value in lookup_dict:
                 df_main.at[idx, lookup["target_column"]] = lookup_dict[value]
@@ -132,7 +136,7 @@ def main():
 
         print(f"✅ Matched: {matched}, ❌ Unmatched: {unmatched}")
 
-        # Add to summary
+        # Track for summary
         summary_data.append({
             "Target Column": lookup["target_column"],
             "Match Column": lookup["match_column"],
@@ -142,25 +146,26 @@ def main():
             "Unmatched Rows": unmatched
         })
 
-    # Step 4: Save unmatched rows if any
+    # 4️⃣ Save unmatched rows
     if all_unmatched_indices:
         df_main.loc[list(all_unmatched_indices)].to_excel(CONFIG["unmatched_output_file"], index=False)
         print(f"\n⚠️ Unmatched rows saved to: {CONFIG['unmatched_output_file']}")
     else:
         print("\n✅ No unmatched rows found.")
 
-    # Step 5: Save main file
+    # 5️⃣ Save updated main Excel
     df_main.to_excel(CONFIG["output_file"], index=False)
-    print(f"💾 Final enhanced file saved to: {CONFIG['output_file']}")
+    print(f"💾 Final output saved to: {CONFIG['output_file']}")
 
-    # Step 6: Append Summary Sheet
+    # 6️⃣ Save Summary sheet to same file
     with pd.ExcelWriter(CONFIG["output_file"], engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
         pd.DataFrame(summary_data).to_excel(writer, sheet_name=CONFIG["summary_sheet_name"], index=False)
-        print(f"📊 Lookup summary saved to sheet: {CONFIG['summary_sheet_name']}")
+        print(f"📊 Lookup summary written to sheet: {CONFIG['summary_sheet_name']}")
 
+    # 7️⃣ Execution time
     print(f"\n🕒 Execution time: {format_duration(datetime.now() - start_time)}")
     print("🎉 Script completed successfully!\n")
 
-# Entry point
+# 🚀 Run main
 if __name__ == "__main__":
     main()
