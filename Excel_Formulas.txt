@@ -1,0 +1,3 @@
+=TEXT(A2,"@") & "|" & TEXT(B2,"@") & "|" & TEXT(C2,"@") & "|" & TEXT(D2,"@") & "|" & TEXT(E2,"mm-dd-yyyy")
+
+=IF(AND(COUNTIF(SAST!F:F, F2)>0, COUNTIF(DAST!F:F, F2)>0), "Open", "Closed")
