@@ -5,43 +5,42 @@ from datetime import datetime
 
 # === CONFIGURATION ===
 CONFIG = {
-    "input_file": "input_data.xlsx",
-    "input_sheet": "Sheet1",
-    "output_file": "processed_output.xlsx",
+    "input_file": "input_data.xlsx",        # Path to your input Excel file
+    "input_sheet": "Sheet1",                # Sheet name to read from
+    "output_file": "processed_output.xlsx", # Path to your output Excel file
 
-    "columns_to_extract": [
-        "App ID", "Application Name", "Scan Date", "Status", "Severity", "Age (days)", "Lifecycle", "Flag"
+    "columns_to_extract": [                 # Columns to retain from the input
+        "App ID", "Application Name", "Scan Date", "Status", "Severity", "Lifecycle"
     ],
 
-    "columns_to_add": {
+    "columns_to_add": {                     # New columns to add (overwrites if exists)
         "Reviewed By": "Security Team",
         "Lifecycle": "",
-        "Flag": ""
     },
 
-    "derived_column": {
-        "column_name": "Age (days)",
-        "based_on_column": "Scan Date"
+    "inplace_age_check": {                  # Calculate age (today - date column) — internal only
+        "date_column": "Scan Date",
+        "age_variable": "age_days"
     },
 
-    "lifecycle_rule": {
-        "trigger_column": "Status",
-        "keyword": "Outdated",
-        "target_column": "Lifecycle",
-        "value": "EOL"
+    "lifecycle_rules": {
+        "target_column": "Lifecycle",       # Column to be updated with logic
+        "eol_rule": {                       # Rule: if Status contains "Outdated"
+            "trigger_column": "Status",
+            "keyword": "Outdated",
+            "value": "EOL"
+        },
+        "slo_rules": [                      # Severity + Age rules
+            {"severity": "Critical",      "age_gt": 30,  "true_value": "Out of SLO", "false_value": "Ignore"},
+            {"severity": "High",          "age_gt": 60,  "true_value": "Out of SLO", "false_value": "Ignore"},
+            {"severity": "Medium",        "age_gt": 90,  "true_value": "Out of SLO", "false_value": "Ignore"},
+            {"severity": "Low",           "age_gt": 0,   "true_value": "Ignore",     "false_value": "Ignore"},
+            {"severity": "Informational", "age_gt": 0,   "true_value": "Ignore",     "false_value": "Ignore"}
+        ]
     },
 
-    "slo_rules": [
-        {"severity": "Critical",       "age_gt": 30,  "true_value": "Out of SLO", "false_value": "Ignore"},
-        {"severity": "High",           "age_gt": 60,  "true_value": "Out of SLO", "false_value": "Ignore"},
-        {"severity": "Medium",         "age_gt": 90,  "true_value": "Out of SLO", "false_value": "Ignore"},
-        {"severity": "Low",            "age_gt": 0,   "true_value": "Ignore",     "false_value": "Ignore"},
-        {"severity": "Informational",  "age_gt": 0,   "true_value": "Ignore",     "false_value": "Ignore"}
-    ],
-
-    "final_mapping": {
-        "column_to_map": "Lifecycle",
-        "target_column": "Flag",
+    "final_mapping": {                      # Final transformation of values in Lifecycle
+        "column": "Lifecycle",
         "map_values": {
             "EOL": "EOL",
             "Ignore": 0,
@@ -52,87 +51,84 @@ CONFIG = {
     "drop_empty_rows": True
 }
 
-# === MAIN FUNCTION ===
+# === PROCESSING LOGIC ===
 def print_header(title):
-    print(f"\n{'='*60}\n🔷 {title}\n{'='*60}")
+    print(f"\n{'=' * 60}\n🔷 {title}\n{'=' * 60}")
 
 def process_excel(config):
     start_time = time.time()
 
-    # STEP 1: Load Excel
-    print_header("STEP 1: LOAD FILE")
+    # STEP 1: Load file
+    print_header("STEP 1: LOAD INPUT FILE")
     if not os.path.exists(config["input_file"]):
         print(f"❌ File not found: {config['input_file']}")
         return
-    df = pd.read_excel(config["input_file"], sheet_name=config.get("input_sheet", 0))
+    df = pd.read_excel(config["input_file"], sheet_name=config["input_sheet"])
     print(f"✅ Loaded {df.shape[0]} rows.")
 
-    # STEP 2: Keep only required columns
+    # STEP 2: Filter required columns
     print_header("STEP 2: SELECT COLUMNS")
     df = df[[col for col in config["columns_to_extract"] if col in df.columns]]
-    if config.get("drop_empty_rows", False):
+    if config.get("drop_empty_rows"):
         before = df.shape[0]
         df = df.dropna(how="all")
-        print(f"🧹 Dropped {before - df.shape[0]} empty rows.")
+        print(f"🧹 Removed {before - df.shape[0]} empty rows.")
 
-    # STEP 3: Add new columns
+    # STEP 3: Add static/blank columns
     print_header("STEP 3: ADD COLUMNS")
     for col, val in config["columns_to_add"].items():
         df[col] = val
-        print(f"➕ Added column: {col} = '{val}'")
+        print(f"➕ Column added: {col} = '{val}'")
 
-    # STEP 4: Calculate Age in Days
-    print_header("STEP 4: CALCULATE AGE")
-    age_col = config["derived_column"]["column_name"]
-    base_col = config["derived_column"]["based_on_column"]
+    # STEP 4: Calculate age difference (internal use only)
+    print_header("STEP 4: CALCULATE AGE IN DAYS")
+    age_cfg = config["inplace_age_check"]
     today = datetime.today().date()
-    df[base_col] = pd.to_datetime(df[base_col], errors='coerce').dt.date
-    df[age_col] = df[base_col].apply(lambda d: (today - d).days if pd.notnull(d) else "")
-    print(f"🧮 Calculated '{age_col}' from '{base_col}'")
+    df[age_cfg["date_column"]] = pd.to_datetime(df[age_cfg["date_column"]], errors='coerce').dt.date
+    df[age_cfg["age_variable"]] = df[age_cfg["date_column"]].apply(
+        lambda d: (today - d).days if pd.notnull(d) else -1
+    )
+    print("🧮 Internal 'age_days' calculated.")
 
-    # STEP 5: Apply Lifecycle (EOL and SLO combined)
-    print_header("STEP 5: SET LIFECYCLE")
-    lconf = config["lifecycle_rule"]
-    slo_rules = config["slo_rules"]
+    # STEP 5: Apply lifecycle logic (EOL + Severity rules)
+    print_header("STEP 5: APPLY LIFECYCLE RULES")
+    rules = config["lifecycle_rules"]
+    tgt_col = rules["target_column"]
+    eol = rules["eol_rule"]
+    slo_rules = rules["slo_rules"]
 
-    def set_lifecycle(row):
-        if lconf["keyword"].lower() in str(row.get(lconf["trigger_column"], "")).lower():
-            return lconf["value"]
+    def classify(row):
+        if eol["keyword"].lower() in str(row.get(eol["trigger_column"], "")).lower():
+            return eol["value"]
         severity = str(row.get("Severity", "")).strip().lower()
-        age = row.get(age_col)
+        age = row.get(age_cfg["age_variable"])
         try:
             age = int(age)
         except:
             return ""
         for rule in slo_rules:
             if rule["severity"].lower() == severity:
-                if age > rule["age_gt"]:
-                    return rule["true_value"]
-                else:
-                    return rule["false_value"]
+                return rule["true_value"] if age > rule["age_gt"] else rule["false_value"]
         return ""
 
-    df[lconf["target_column"]] = df.apply(set_lifecycle, axis=1)
-    print(f"✅ Lifecycle values set using SLO and status rules.")
+    df[tgt_col] = df.apply(classify, axis=1)
+    print(f"✅ '{tgt_col}' populated with lifecycle classification.")
 
-    # STEP 6: Final Mapping (e.g. Lifecycle → Flag)
-    print_header("STEP 6: FINAL FLAG MAPPING")
+    # STEP 6: Final overwrite mapping on same column
+    print_header("STEP 6: FINAL MAPPING IN-PLACE")
     fmap = config["final_mapping"]
-    source_col = fmap["column_to_map"]
-    target_col = fmap["target_column"]
-    mapping = fmap["map_values"]
+    df[fmap["column"]] = df[fmap["column"]].map(fmap["map_values"]).fillna("")
+    print(f"🔁 Final values updated in '{fmap['column']}'")
 
-    df[target_col] = df[source_col].map(mapping).fillna("")
-    print(f"✅ Final column '{target_col}' mapped from '{source_col}'")
+    # STEP 7: Save output
+    print_header("STEP 7: SAVE OUTPUT FILE")
+    df.drop(columns=[age_cfg["age_variable"]], errors='ignore').to_excel(config["output_file"], index=False)
+    print(f"✅ File saved: {config['output_file']}")
 
-    # STEP 7: Save to file
-    print_header("STEP 7: SAVE OUTPUT")
-    df.to_excel(config["output_file"], index=False)
-    print(f"✅ Output saved: {config['output_file']}")
+    # Done
+    print_header("✅ PROCESS COMPLETE")
+    print(f"⏱️ Time taken: {time.time() - start_time:.2f} seconds")
 
-    print_header("✅ COMPLETE")
-    print(f"⏱️ Execution Time: {time.time() - start_time:.2f} seconds")
-
-# === RUN SCRIPT ===
+# === RUN ===
 if __name__ == "__main__":
     process_excel(CONFIG)
