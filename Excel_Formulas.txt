@@ -14,3 +14,5 @@
   ),
   ""
 )
+
+=IF(G2="Out of SLO","Expired",G2)
